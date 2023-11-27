@@ -74,16 +74,18 @@
   - Small models with trivial compute requirements
   - Input data on a low-throughput storage system
 - **Improvements:**
-  - Efficient data storage
+  - - For fast IO in tensorflow, also consider using TF Records(efficient batch reads, without overhead of parsing data in python)
+  - Faster accelerators (GPUs, TPUs)
+  - Efficient data storage, storing the data on a storage system with higher throughput
   - Parallelizing reads
-  - Reducing batch size
+  - Reducing batch size (not ideal , last retort)
 
 ### CPU-Bound Training
 - **Indicators:**
   - Simple IO but complex, computationally expensive models
   - Running on underpowered hardware
 - **Improvements:**
-  - Faster accelerators (GPUs, TPUs)
+  
   - Simpler models or activation functions
   - Training for fewer steps
 
@@ -272,11 +274,162 @@ There are four TensorFlow distributed training strategies that support data para
 
 ## Multi-worker Mirrored Strategy
 
+**1. Introduction to Multi-Worker Mirrored Strategy**
+   - Multi-worker mirrored strategy is an extension of mirrored strategy.
+   - Synchronous distributed training across multiple workers, each potentially having multiple GPUs.
+   - Like mirrored strategy, it involves creating copies of all model variables on each device across all workers.
+
+**2. Scaling Training with Multiple Machines**
+   - To scale training further, add multiple machines to the cluster.
+   - Machines can be CPU-only or have one or more GPUs.
+   - Particularly useful when looking to enhance performance beyond single-host training.
+
+**3. Code Adaptation for Multi-Worker Mirrored Strategy**
+   - Similar to single-worker mirrored strategy, multi-worker mirrored strategy employs synchronous data parallelism.
+   - Requires minimal code changes for implementation.
+
+**4. TensorFlow Cluster Configuration**
+   - Unlike mirrored strategy, multi-worker setup requires TensorFlow to know which machines are part of the cluster.
+   - Specification typically involves the use of the "TF_CONFIG" environment variable.
+   - "TF_CONFIG" example includes a "cluster" key with internal IPs and ports of all machines.
+
+**5. Worker Designation in Multi-Worker Mirrored Strategy**
+   - All machines in multi-worker mirrored strategy are designated as "workers."
+   - One worker takes on additional responsibilities as the "chief" or "master."
+   - The chief handles tasks such as saving checkpoints and writing summary files to TensorBoard.
+
+**6. TF_CONFIG Setup in AI Platform Training**
+   - When using AI Platform training, TF_CONFIG is conveniently set on each machine in the cluster.
+   - Eliminates the need for manual TF_CONFIG setup.
+
+**7. Steps for Implementation**
+   - Step 1: Create a strategy object from the tf.distribute module.
+   - Step 2: Wrap the creation of model parameters within the scope of the strategy to specify variables for mirroring.
+   - Step 3: Scale the batch size by the number of replicas in the cluster.
+
+**8. Handling Gradients in Multi-Worker Setup**
+   - Gradients at the end of each step need synchronization across all GPUs in a machine and across all machines in the cluster.
+   - This synchronization step increases distribution overhead.
+
+**9. Sharding Data in Multi-Worker Mirrored Strategy**
+   - Data needs to be sharded in a multi-worker setup, meaning each worker is assigned a subset of the entire dataset.
+   - Autosharding is recommended, as it prevents each replica from processing every example in the dataset.
+
+**10. Autosharding with tf.data.experimental.AutoShardPolicy**
+   - Autosharding is handled by tf.data.experimental.AutoShardPolicy.
+   - Default policy is set to AUTO, sharding data based on whether it is file-based or not.
+
+**11. Saving Model in Multi-Worker Scenario**
+   - Saving the model is more complex in multi-worker setups, requiring different destinations for each worker.
+   - The chief worker saves to the desired model directory, while other workers save to temporary directories.
+   - Temporary directories must be unique to avoid conflicts.
+   - All workers, not just the chief, must participate in saving, and it can contain collective ops.
+
 ## TPU Strategy
+
+### Introduction to Distribution Strategies
+- **TPUStrategy Overview**
+  - Similar to MirroredStrategy but designed for Tensor Processing Units (TPUs).
+  - TPUStrategy performs all-reduce across TPU cores.
+  - TPUs are Google's specialized ASICs for accelerating machine learning workloads.
+
+### TPUStrategy and Tensor Processing Units (TPUs)
+
+- **Implementation with TPUStrategy**
+  - Use `tf.distribute.TPUStrategy` to run TensorFlow training on TPUs.
+  - Requires a variable named "strategy," chosen with `tf.distribute.TPUStrategy` method.
+
+### Challenges and Solutions with TPUStrategy
+- **Data Bottleneck on TPUs**
+  - Fast TPUs may lead to a data bottleneck during training.
+  - TPU sits idle, waiting for data for a significant part of each training epoch.
+- **Reading Data from Google Cloud Storage (GCS)**
+  - TPUs read training data exclusively from Google Cloud Storage (GCS).
+  - GCS can sustain large throughput when continuously streaming from multiple files in parallel.
+- **Optimizing Throughput**
+  - Best practices involve optimizing throughput for efficient TPU usage.
+  - Balancing the number of files to avoid bottlenecks and wasted time accessing individual files.
+
+### Implementation Details
+- **Required Variable: "strategy"**
+  - Utilize the `tf.distribute.TPUStrategy` method to set up the strategy variable.
+- **Code Summary for Distribution Strategies**
+  - Base model: Keras Sequential model.
+  - Strategies for improvement:
+    - `MirroredStrategy` for basic enhancement.
+    - `MultiWorkerMirroredStrategy` for faster training.
+    - `TPUStrategy` for exceptionally fast training on TPUs.
 
 ## Parameter Server Strategy
 
+### **Introduction:**
+- Explored the asynchronous parameter server architecture.
+- Parameter server training cluster comprises Workers and Parameter Servers.
+
+### **Roles of Workers and Parameter Servers:**
+- Variables are created on Parameter Servers.
+- Workers read and update these variables in each step.
+- By default, Workers operate independently without synchronization.
+
+### **Introduction of TensorFlow Parameter Server Strategy:**
+- TensorFlow parameter server strategy adds a central coordinator.
+- Coordinator is a special task type responsible for creating resources, dispatching training tasks, writing checkpoints, and handling task failures.
+- Creation of parameter server strategy object similar to other strategies.
+
+### **Dataset Function Details:**
+- Code in `dataset_fn` invoked on the input device (usually CPU) on each Worker machine.
+- Recommended to shuffle and repeat the dataset when using the parameter server strategy.
+- Parse in the `steps per epoch` argument to `model.fit`.
+
+### **Summary:**
+- Asynchronous parameter server architecture involves Workers and Parameter Servers.
+- TensorFlow parameter server strategy adds a Coordinator for centralized control.
+- Creation of the parameter server strategy object, including the use of ClusterResolver.
+- Use of `model.fit` with specific requirements for input data and dataset functions.
+- Important considerations for dataset functions, including shuffling, repeating, and specifying steps per epoch.
+
 ## Inference
 
+Performance Considerations in Model Inference
+
+**1. Introduction**
+- High-performance inference involves considerations such as throughput(QPS), latency, and costs.
+
+**2. Approaches to Implementation**
+- Three main approaches discussed for implementing high-performance inference:
+    1. Deployed Model using REST or HTTP API for *streaming pipelines*.
+    2. AI Platform Notebooks batch prediction jobs for batch pipelines.
+    3. Cloud Dataflow direct-model prediction for both batch and streaming pipelines.
+
+**3. Understanding "Batch" in Inference**
+- The term "batch" in inference refers to a bounded dataset.
+- Batch data pipeline involves reading from persistent storage (data lake or data warehouse), processing, and writing to the same or different format.
+- Cloud Dataflow enriches data with predictions from an ML model.
+
+**4. Options for Enriching Data with Predictions**
+- Two options discussed:
+    1. Using TensorFlow SavedModel loaded into the Dataflow pipeline.
+    2. Using TensorFlow Serving accessed via an HTTP endpoint (microservice) from AI Platform Notebooks or Kubeflow on Kubernetes.
+
+*Insert Image for batch inferencing*
+
+**5. Performance Comparison for Batch Pipelines**
+- AI Platform Notebooks batch predictions provide the highest raw processing speed.
+- Loading the SavedModel directly into Dataflow is the next fastest.
+- TensorFlow Serving on AI Platform Notebooks is slightly slower in terms of speed.
+- For maintainability, batch predictions using AI Platform notebooks are still the best(fully managed service), but TF Serving (online predictions as a microservice) allow for easier upgradability and dependency management that loading the SavedModel.
+
+**6. Streaming Pipelines**
+- Streaming pipelines involve reading from an unbounded source (e.g., pub/sub) and processing with Dataflow.
+- Options for predictions in streaming pipelines: TensorFlow SavedModel or TensorFlow Serving on AI Platform Notebooks.
+
+**7. Performance Considerations for Streaming Pipelines**
+- The SavedModel approach is the fastest for streaming pipelines.
+  - Minibatching is recommended to reduce the gap between TensorFlow Serving HTTP endpoint and directly loading the model into the client.
+- AI Platform Notebooks approach is more maintainable, especially for multiple clients.
+
+**8. Scalability Considerations**
+- As the number of queries per second increases, the feasibility of the SavedModel approach may decrease.
+- AI Platform Notebooks approach is considered to scale indefinitely.
 
 
